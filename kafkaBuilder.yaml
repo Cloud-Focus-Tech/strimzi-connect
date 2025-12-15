@@ -1,0 +1,68 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  name: ccloud-connect
+  namespace: strimzi-connect
+  annotations:
+    strimzi.io/use-connector-resources: "true"   # manage connectors via KafkaConnector CRs :contentReference[oaicite:3]{index=3}
+spec:
+  replicas: 2
+
+  # Confluent Cloud bootstrap (from secret via env below); keep this as a placeholder
+  bootstrapServers: "${env:BOOTSTRAP_SERVERS}"
+
+  # Strimzi will build an image with the connector plugin(s)
+  build:
+    output:
+      type: docker
+      image: ghcr.io/YOUR_ORG/ccloud-connect-jdbc:1.0.0
+      pushSecret: registry-credentials   # create this secret for your registry auth
+    plugins:
+      - name: jdbc
+        artifacts:
+          # Option A: Maven artifact (preferred when possible)
+          - type: maven
+            group: "io.confluent"
+            artifact: "kafka-connect-jdbc"
+            version: "10.7.6"
+
+  externalConfiguration:
+    env:
+      - name: BOOTSTRAP_SERVERS
+        valueFrom:
+          secretKeyRef:
+            name: ccloud-kafka-credentials
+            key: BOOTSTRAP_SERVERS
+      - name: KAFKA_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: ccloud-kafka-credentials
+            key: KAFKA_API_KEY
+      - name: KAFKA_API_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: ccloud-kafka-credentials
+            key: KAFKA_API_SECRET
+
+  config:
+    group.id: "ccloud-connect"
+
+    # Connect internal topics (must exist in Confluent Cloud or be auto-created via ACLs)
+    config.storage.topic: "_connect-configs"
+    offset.storage.topic: "_connect-offsets"
+    status.storage.topic: "_connect-status"
+
+    # Confluent Cloud is typically RF=3
+    config.storage.replication.factor: 3
+    offset.storage.replication.factor: 3
+    status.storage.replication.factor: 3
+
+    key.converter: "org.apache.kafka.connect.json.JsonConverter"
+    value.converter: "org.apache.kafka.connect.json.JsonConverter"
+    key.converter.schemas.enable: false
+    value.converter.schemas.enable: false
+
+    # Confluent Cloud auth for Kafka clients (workers)
+    security.protocol: "SASL_SSL"
+    sasl.mechanism: "PLAIN"
+    sasl.jaas.config: "org.apache.kafka.common.security.plain.PlainLoginModule required username='${env:KAFKA_API_KEY}' password='${env:KAFKA_API_SECRET}';"
